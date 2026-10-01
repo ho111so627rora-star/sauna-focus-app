@@ -59,8 +59,8 @@ class _ColdBathScreenState extends State<ColdBathScreen>
         final sessionProvider = context.read<SessionProvider>();
         sessionProvider.correctTimerOnResume();
         
-        // 音源の継続を確認
-        _audioService.ensurePersistentAudio();
+        // 割り込み（電話など）で止まった環境音を再開
+        _audioService.resumeIfNeeded();
         break;
       case AppLifecycleState.paused:
         print('水風呂画面: アプリがバックグラウンドに移行しました');

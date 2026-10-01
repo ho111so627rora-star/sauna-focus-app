@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import '../providers/audio_settings_provider.dart';
 
 class AudioService {
@@ -37,6 +38,16 @@ class AudioService {
       // 環境音はプレイヤー側のループ機能でループ再生する
       await _audioPlayer.setReleaseMode(ReleaseMode.loop);
       await _effectPlayer.setReleaseMode(ReleaseMode.release);
+
+      if (!kIsWeb) {
+        // 画面オフ・バックグラウンドでも再生を続ける設定
+        // Android: プレイヤーに PARTIAL_WAKE_LOCK を持たせる（無いと画面オフ中にCPUが眠って音が止まることがある）
+        // iOS: .playback カテゴリ（Info.plist の UIBackgroundModes=audio と合わせてバックグラウンド再生）
+        final audioContext = AudioContextConfig(stayAwake: true).build();
+        await AudioPlayer.global.setAudioContext(audioContext);
+        await _audioPlayer.setAudioContext(audioContext);
+        await _effectPlayer.setAudioContext(audioContext);
+      }
     } catch (e) {
       print('音声の初期化に失敗しました: $e');
     }
@@ -49,6 +60,19 @@ class AudioService {
     _watchdogTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       _checkAndRestartAudioIfNeeded();
     });
+  }
+
+  // アプリがフォアグラウンドに戻った時に環境音を再開
+  // 電話・アラーム・Siriなどの割り込みでOS側が再生を止めた場合、プレイヤーの状態は
+  // 「再生中」のまま変わらないため監視タイマーでは検知できない。resume()は再生中なら何もしない。
+  Future<void> resumeIfNeeded() async {
+    if (_isSessionComplete || _currentAudioSource == null) return;
+    try {
+      await _audioPlayer.setVolume(_currentVolume);
+      await _audioPlayer.resume();
+    } catch (e) {
+      print('環境音の再開に失敗しました: $e');
+    }
   }
 
   // 環境音が止まっていたら再開
@@ -82,10 +106,9 @@ class AudioService {
       }
 
       // 切り替え中に監視タイマーが古い音源を再開しないようにする
+      // （stop()は挟まずにそのまま次の音源へ切り替える。iOSのバックグラウンドでは
+      //   無音の時間ができるとアプリが一時停止され、次の音源が鳴らなくなるため）
       _currentAudioSource = null;
-      await _audioPlayer.stop();
-      if (requestId != _requestId) return;
-
       await _audioPlayer.setReleaseMode(ReleaseMode.loop);
       await _audioPlayer.setVolume(volume);
       if (requestId != _requestId) return;

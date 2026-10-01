@@ -104,62 +104,65 @@ class SessionProvider extends ChangeNotifier {
 
     // 残り時間はフェーズ開始時刻からの実経過時間で計算する
     // （1秒ごとに減らす方式だと、バックグラウンドやタブ非表示でタイマーが間引かれた時にずれるため）
-    if (_currentPhaseStartTime != null) {
-      final elapsedSeconds = DateTime.now().difference(_currentPhaseStartTime!).inSeconds;
-      _remainingTime = max(0, _currentPhaseInitialTime - elapsedSeconds);
+    // アプリが止まっていた間に複数フェーズ分の時間が過ぎていた場合も、予定どおりの時刻で
+    // フェーズを進めて現在のフェーズまで追いつく
+    for (var i = 0; i < 100 && _isTimerRunning && _currentPhaseStartTime != null; i++) {
+      final phaseEnd = _currentPhaseStartTime!.add(Duration(seconds: _currentPhaseInitialTime));
+      _remainingTime = max(0, phaseEnd.difference(DateTime.now()).inSeconds);
+
+      // ロウリュタイミング（残り5分）- 自動的にロウリュウモードに移行
+      if (_currentPhase == SessionPhase.sauna &&
+          !_isLowryuMode &&
+          _currentPhaseInitialTime > 300 &&
+          _remainingTime <= 300) {
+        // 残り5分になった時刻でロウリュウを開始（サウナ時間を記録してからロウリュウモードに移行）
+        startLowryu(phaseEnd.subtract(const Duration(seconds: 300)));
+        continue;
+      }
+
+      if (_remainingTime > 0) {
+        break;
+      }
+
+      // 残り時間が0になったら、予定の終了時刻で次のフェーズへ
+      _advancePhase(phaseEnd);
     }
 
-    // ロウリュタイミング（残り5分）- 自動的にロウリュウモードに移行
-    if (_currentPhase == SessionPhase.sauna &&
-        !_isLowryuMode &&
-        _currentPhaseInitialTime > 300 &&
-        _remainingTime > 0 &&
-        _remainingTime <= 300) {
-      // startLowryu()を呼んでサウナ時間を記録してからロウリュウモードに移行
-      startLowryu();
-      return;
-    }
-
-    if (_remainingTime > 0) {
-      notifyListeners();
-      return;
-    }
-
-    // 残り時間が0になったら次のフェーズへ
-    _advancePhase();
+    notifyListeners();
   }
 
   // 現在のフェーズを終了して次のフェーズへ進む
-  void _advancePhase() {
+  void _advancePhase([DateTime? at]) {
+    final now = at ?? DateTime.now();
     // ロウリュウモードの場合はfinishLowryu()を呼ぶ
     if (_currentPhase == SessionPhase.lowryu || _isLowryuMode) {
-      finishLowryu();
+      finishLowryu(now);
       return;
     }
 
     switch (_currentPhase) {
       case SessionPhase.sauna:
-        _recordPhaseCompletion();
+        _recordPhaseCompletion(now);
         _currentPhase = SessionPhase.coldBath;
         _remainingTime = _coldBathDuration * 60;
-        _currentPhaseStartTime = DateTime.now();
+        _currentPhaseStartTime = now;
         _currentPhaseInitialTime = _coldBathDuration * 60;
         notifyListeners();
         break;
       case SessionPhase.coldBath:
-        _recordPhaseCompletion();
+        _recordPhaseCompletion(now);
         _currentPhase = SessionPhase.airBath;
         _remainingTime = _airBathDuration * 60;
-        _currentPhaseStartTime = DateTime.now();
+        _currentPhaseStartTime = now;
         _currentPhaseInitialTime = _airBathDuration * 60;
         notifyListeners();
         break;
       case SessionPhase.airBath:
-        _recordPhaseCompletion();
+        _recordPhaseCompletion(now);
         print('外気浴終了: 現在のセット = $_currentSet, セット数 = $_setCount');
         if (_currentSet < _setCount) {
           print('次のセットに進みます: $_currentSet → ${_currentSet + 1}');
-          nextSet();
+          nextSet(now);
         } else {
           print('最後のセットなのでセッション完了します');
           _completeSession();
@@ -172,37 +175,17 @@ class SessionProvider extends ChangeNotifier {
 
   // バックグラウンド復帰時の時間補正
   void correctTimerOnResume() {
-    if (_currentPhaseStartTime != null && _isTimerRunning) {
-      final now = DateTime.now();
-      final elapsedTime = now.difference(_currentPhaseStartTime!);
-      final elapsedSeconds = elapsedTime.inSeconds;
-      
-      print('バックグラウンド復帰時の時間補正:');
-      print('経過時間: ${elapsedSeconds}秒');
-      print('初期時間: ${_currentPhaseInitialTime}秒');
-      print('現在の残り時間: $_remainingTime秒');
-      
-      // 実際に経過した時間に基づいて残り時間を計算
-      final actualRemainingTime = _currentPhaseInitialTime - elapsedSeconds;
-      
-      if (actualRemainingTime > 0) {
-        _remainingTime = actualRemainingTime;
-        print('補正後の残り時間: $_remainingTime秒');
-      } else {
-        // 時間が過ぎている場合は0に設定
-        _remainingTime = 0;
-        print('時間が過ぎているため、残り時間を0に設定');
-      }
-      
-      notifyListeners();
-    }
+    // 残り時間は常に実経過時間から計算しているので、復帰時はそのまま更新すればよい
+    print('バックグラウンド復帰時の時間補正');
+    updateTimer();
   }
 
   // フェーズ完了を記録
-  void _recordPhaseCompletion() {
+  void _recordPhaseCompletion([DateTime? end]) {
+    final now = end ?? DateTime.now();
     if (_currentPhaseStartTime != null) {
       // 実際の経過時間を計算（秒単位で計算してから分に変換）
-      final actualTimeSeconds = DateTime.now().difference(_currentPhaseStartTime!).inSeconds;
+      final actualTimeSeconds = now.difference(_currentPhaseStartTime!).inSeconds;
       final actualMinutes = (actualTimeSeconds / 60).ceil(); // 秒を分に変換（切り上げ）
       
       // 現在のセットレコードを更新または作成
@@ -276,13 +259,14 @@ class SessionProvider extends ChangeNotifier {
   }
 
   // ロウリュウモード開始
-  void startLowryu() {
+  void startLowryu([DateTime? at]) {
+    final now = at ?? DateTime.now();
     _isLowryuMode = true;
     _currentSetUsedLowryu = true;
     
     // ロウリュウ開始前のサウナ時間を記録（秒単位で計算してから分に変換）
     if (_currentPhaseStartTime != null) {
-      final saunaDurationSeconds = DateTime.now().difference(_currentPhaseStartTime!).inSeconds;
+      final saunaDurationSeconds = now.difference(_currentPhaseStartTime!).inSeconds;
       final saunaDurationMinutes = (saunaDurationSeconds / 60).ceil(); // 秒を分に変換（切り上げ）
       
       print('ロウリュウ開始: サウナ時間計算: ${saunaDurationSeconds}秒 = ${saunaDurationMinutes}分');
@@ -327,18 +311,19 @@ class SessionProvider extends ChangeNotifier {
     
     _currentPhase = SessionPhase.lowryu; // フェーズをロウリュウに変更
     _remainingTime = 5 * 60; // 5分に設定
-    _currentPhaseStartTime = DateTime.now();
+    _currentPhaseStartTime = now;
     _currentPhaseInitialTime = 5 * 60;
     notifyListeners();
   }
 
   // ロウリュウモード終了
-  void finishLowryu() {
+  void finishLowryu([DateTime? at]) {
+    final now = at ?? DateTime.now();
     _isLowryuMode = false;
     
     // ロウリュウモードで実際に過ごした時間を計算（秒単位で計算してから分に変換）
     if (_currentPhaseStartTime != null) {
-      final lowryuDurationSeconds = DateTime.now().difference(_currentPhaseStartTime!).inSeconds;
+      final lowryuDurationSeconds = now.difference(_currentPhaseStartTime!).inSeconds;
       final lowryuDurationMinutes = (lowryuDurationSeconds / 60).ceil(); // 秒を分に変換（切り上げ）
       
       print('ロウリュウ時間計算: ${lowryuDurationSeconds}秒 = ${lowryuDurationMinutes}分');
@@ -366,7 +351,7 @@ class SessionProvider extends ChangeNotifier {
     
     _currentPhase = SessionPhase.coldBath;
     _remainingTime = _coldBathDuration * 60;
-    _currentPhaseStartTime = DateTime.now();
+    _currentPhaseStartTime = now;
     _currentPhaseInitialTime = _coldBathDuration * 60;
     notifyListeners();
   }
@@ -484,7 +469,8 @@ class SessionProvider extends ChangeNotifier {
   }
 
   // 次のセットに進む
-  void nextSet() {
+  void nextSet([DateTime? at]) {
+    final now = at ?? DateTime.now();
     print('nextSet()呼び出し: 現在のセット = $_currentSet, セット数 = $_setCount');
     if (_currentSet < _setCount) {
       _currentSet++;
@@ -493,7 +479,7 @@ class SessionProvider extends ChangeNotifier {
       _remainingTime = _saunaDuration * 60;
       _isTimerRunning = true;
       _isLowryuMode = false;
-      _currentPhaseStartTime = DateTime.now();
+      _currentPhaseStartTime = now;
       _currentPhaseInitialTime = _saunaDuration * 60;
       _currentSetUsedLowryu = false;
       // 前のセットの日記・振り返りが次のセットに引き継がれないようにクリア
