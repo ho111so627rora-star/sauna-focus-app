@@ -8,6 +8,15 @@ https://ho111so627rora-star.github.io/sauna-focus-app/
 
 `main` ブランチに push すると、GitHub Actions（`.github/workflows/deploy-web.yml`）が Web 版をビルドして GitHub Pages に公開します。
 
+## iPhone に個人用で入れる（Mac なし）
+
+1. GitHub の Actions タブ →「Build iOS IPA (unsigned)」の最新の成功した実行を開き、Artifacts の `sauna-focus-ipa` をダウンロードして解凍する
+2. Windows に [Sideloadly](https://sideloadly.io/) と iTunes（Apple 公式サイト版）を入れ、iPhone を USB で接続する
+3. Sideloadly に `sauna-focus-unsigned.ipa` をドラッグし、Apple ID を入力して Start
+   - バンドル ID が使用できないというエラーが出たら、Advanced options で Bundle ID を `com.<自分の名前>.saunafocus` などに変更する
+4. iPhone の「設定 → 一般 → VPNとデバイス管理」で自分の Apple ID を信頼する（iOS 16 以降は「設定 → プライバシーとセキュリティ → デベロッパモード」もオンにする）
+5. 無料の Apple ID の場合は 7 日で起動できなくなるので、同じ手順で入れ直す
+
 ## アプリのコンセプト
 
 このアプリは、ユーザーがスマホを触らない・集中する時間を、仮想のサウナ体験（サウナ室→水風呂→外気浴）に重ねることで、整う感覚を味わえる構成になっています。

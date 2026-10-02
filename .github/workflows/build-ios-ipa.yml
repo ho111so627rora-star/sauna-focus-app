@@ -1,0 +1,46 @@
+name: Build iOS IPA (unsigned)
+
+# 署名なしの .ipa を作る。Sideloadly などで自分の Apple ID で署名してインストールする用
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/**'
+      - 'ios/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/build-ios-ipa.yml'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.35.6
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # 実機でデバッガなしに起動できるよう release ビルドにする
+      - name: Build iOS app (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA
+        run: |
+          mkdir -p build/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/
+          cd build/ipa
+          zip -qry sauna-focus-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sauna-focus-ipa
+          path: build/ipa/sauna-focus-unsigned.ipa
+          retention-days: 30
